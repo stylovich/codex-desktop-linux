@@ -25,6 +25,39 @@ The cached upstream DMG lives in:
 Codex.dmg
 ```
 
+## New Machine Setup
+
+Clone the local workflow branch from the fork:
+
+```bash
+git clone -b local-workflow https://github.com/stylovich/codex-desktop-linux.git
+cd codex-desktop-linux
+```
+
+Install host dependencies:
+
+```bash
+bash scripts/install-deps.sh
+```
+
+Build a fresh local app from the current upstream DMG:
+
+```bash
+scripts/codex-desktop-update-local.sh --fresh
+```
+
+Install user-local application menu entries:
+
+```bash
+scripts/codex-desktop-install-desktop-files.sh
+```
+
+The app can then be launched from the application menu or with:
+
+```bash
+scripts/codex-desktop-run.sh auto
+```
+
 ## Launching
 
 From the repo root:
