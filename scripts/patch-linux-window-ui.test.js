@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 const assert = require("node:assert/strict");
+const crypto = require("node:crypto");
 const { spawnSync } = require("node:child_process");
 const fs = require("node:fs");
 const os = require("node:os");
@@ -11,6 +12,7 @@ const vm = require("node:vm");
 const {
   COMPUTER_USE_UI_ENV_VAR,
   COMPUTER_USE_UI_SETTINGS_KEY,
+  applyAutomationScheduleMultiTimePatch,
   applyKeybindsSettingsIndexPatch,
   applyLinuxComputerUseFeaturePatch,
   applyLinuxComputerUseInstallFlowPatch,
@@ -23,6 +25,7 @@ const {
   applyLinuxChromePluginAutoInstallPatch,
   applyLinuxAppUpdaterBridgePatch,
   applyLinuxAppUpdaterMenuPatch,
+  applyLinuxBuildInfoTrayPatch,
   applyLinuxExplicitIpcQuitPatch,
   applyLinuxExplicitQuitPromptBypassPatch,
   applyLinuxExplicitTrayQuitPatch,
@@ -51,6 +54,7 @@ const {
   patchExtractedApp,
   patchPackageJson,
   patchLinuxAppUpdaterBridge,
+  patchAutomationScheduleAssets,
   createPatchReport,
   corePatchDescriptors,
   detectLinuxTargetContext,
@@ -63,6 +67,11 @@ const {
 const {
   validateReport,
 } = require("./ci/validate-patch-report.js");
+const {
+  buildInfo,
+  packageProfile,
+  sourceInfo,
+} = require("./lib/build-info.js");
 const {
   applyBrowserAnnotationScreenshotPatch,
   applyPersistentRateLimitFooterPatch,
@@ -84,6 +93,10 @@ function escapeRegExp(value) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
+function cryptoHash(value) {
+  return crypto.createHash("sha256").update(value).digest("hex");
+}
+
 function applyPatchTwice(patchFn, source, ...args) {
   const patched = patchFn(source, ...args);
   assert.equal(patchFn(patched, ...args), patched);
@@ -102,6 +115,66 @@ function captureWarns(fn) {
     console.warn = originalWarn;
   }
 }
+
+function automationScheduleBundleFixture() {
+  return [
+    "var Cc={MO:1,TU:2,WE:3,TH:4,FR:5,SA:6,SU:0};",
+    "function wc(e){let t=Tc(e.byhour),n=Tc(e.byminute);return t!=null&&n!=null?{hour:t,minute:n}:e.dtstart?{hour:e.dtstart.getHours(),minute:e.dtstart.getMinutes()}:null}",
+    "function Tc(e){return Array.isArray(e)?typeof e[0]==`number`?e[0]:null:typeof e==`number`?e:null}",
+    "function Ec(e,t){let n=new Date(e),r=new Date(n.getFullYear(),n.getMonth(),n.getDate(),t.hour,t.minute,0,0);return r.getTime()<=e&&r.setDate(r.getDate()+1),r.getTime()}",
+    "function Dc(e,t,n){let r=new Date(e),i=r.getDay(),a=n.length>0?n:[0,1,2,3,4,5,6];for(let n=0;n<=7;n+=1){let o=(i+n)%7;if(!a.includes(o))continue;let s=new Date(r.getFullYear(),r.getMonth(),r.getDate()+n,t.hour,t.minute,0,0);if(s.getTime()>e)return s.getTime()}return e}",
+    "function Oc(e){return e?(Array.isArray(e)?e:[e]).map(e=>{if(typeof e==`number`)return Ac(e);if(kc(e))return Ac(e.weekday);let t=String(e);return t in Cc?Cc[t]:null}).filter(e=>e!=null):[]}",
+    "function kc(e){return typeof e!=`object`||!e||!(`weekday`in e)?!1:typeof e.weekday==`number`}",
+    "function Ac(e){return!Number.isInteger(e)||e<0||e>6?null:(e+1)%7}",
+    "var jc=`codex_chronicle`;",
+  ].join("");
+}
+
+function evaluateAutomationSchedule(source, now, options) {
+  const context = { now, options, result: null };
+  vm.runInNewContext(
+    `${source};result=Dc(now,wc(options),Oc(options.byweekday));`,
+    context,
+  );
+  return context.result;
+}
+
+test("automation schedule patch honors multiple BYHOUR values", () => {
+  const patched = applyPatchTwice(applyAutomationScheduleMultiTimePatch, automationScheduleBundleFixture());
+  const options = {
+    byhour: [11, 14, 17, 20],
+    byminute: [0],
+    byweekday: ["MO", "TU", "WE", "TH", "FR"],
+    dtstart: new Date(2026, 4, 22, 16, 27, 0, 0),
+  };
+
+  assert.match(patched, /function codexLinuxNormalizeRruleNumbers/);
+  assert.equal(
+    evaluateAutomationSchedule(patched, new Date(2026, 4, 22, 16, 27, 0, 0).getTime(), options),
+    new Date(2026, 4, 22, 17, 0, 0, 0).getTime(),
+  );
+  assert.equal(
+    evaluateAutomationSchedule(patched, new Date(2026, 4, 22, 20, 1, 0, 0).getTime(), options),
+    new Date(2026, 4, 25, 11, 0, 0, 0).getTime(),
+  );
+});
+
+test("automation schedule asset patch updates workspace-root bundle", () => {
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "codex-automation-schedule-"));
+  try {
+    const buildDir = path.join(tempRoot, ".vite", "build");
+    fs.mkdirSync(buildDir, { recursive: true });
+    const bundlePath = path.join(buildDir, "workspace-root-drop-handler-test.js");
+    fs.writeFileSync(bundlePath, automationScheduleBundleFixture(), "utf8");
+
+    assert.deepEqual(patchAutomationScheduleAssets(tempRoot), { matched: 1, changed: 1 });
+    const patched = fs.readFileSync(bundlePath, "utf8");
+    assert.match(patched, /function codexLinuxRruleTimes/);
+    assert.deepEqual(patchAutomationScheduleAssets(tempRoot), { matched: 1, changed: 0 });
+  } finally {
+    fs.rmSync(tempRoot, { recursive: true, force: true });
+  }
+});
 
 test("asset patch helpers match every file when passed a global regex", () => {
   const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "codex-asset-global-"));
@@ -198,6 +271,114 @@ test("Linux target context parses distro, package, and desktop details", () => {
   } finally {
     fs.rmSync(tempRoot, { recursive: true, force: true });
   }
+});
+
+test("build info captures DMG hash, features, distro profile, and source revision", () => {
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "codex-build-info-"));
+  try {
+    const dmgPath = path.join(tempRoot, "Codex.dmg");
+    fs.writeFileSync(dmgPath, "fake dmg payload", "utf8");
+
+    const appDir = path.join(tempRoot, "Codex.app");
+    fs.mkdirSync(path.join(appDir, "Contents"), { recursive: true });
+    fs.writeFileSync(
+      path.join(appDir, "Contents", "Info.plist"),
+      [
+        '<?xml version="1.0" encoding="UTF-8"?>',
+        '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">',
+        '<plist version="1.0"><dict>',
+        "<key>CFBundleShortVersionString</key><string>1.2.3</string>",
+        "</dict></plist>",
+      ].join("\n"),
+      "utf8",
+    );
+
+    const featuresRoot = path.join(tempRoot, "linux-features");
+    fs.mkdirSync(featuresRoot, { recursive: true });
+    fs.writeFileSync(
+      path.join(featuresRoot, "features.json"),
+      JSON.stringify({ enabled: ["read-aloud", "zed-opener"] }),
+      "utf8",
+    );
+
+    const info = buildInfo({
+      repoDir: tempRoot,
+      dmgPath,
+      appDir,
+      electronVersion: "41.3.0",
+      appId: "codex-desktop",
+      appDisplayName: "Codex Desktop",
+      featuresRoot,
+      env: {
+        CODEX_LINUX_SOURCE_COMMIT: "abcdef1234567890",
+        CODEX_LINUX_SOURCE_BRANCH: "main",
+        CODEX_LINUX_SOURCE_REMOTE: "https://ghp_secret-token@github.com/example/codex-desktop-linux.git",
+        SOURCE_DATE_EPOCH: "1710000000",
+      },
+      linuxTarget: detectLinuxTargetContext({
+        osReleaseFields: {
+          ID: "ubuntu",
+          ID_LIKE: "debian",
+          VERSION_ID: "24.04",
+          PRETTY_NAME: "Ubuntu 24.04 LTS",
+        },
+        env: { PATH: "" },
+      }),
+    });
+
+    assert.equal(info.generatedAt, new Date(1710000000 * 1000).toISOString());
+    assert.equal(info.upstreamDmg.path, undefined);
+    assert.equal(info.upstreamDmg.sha256, "e33df8d941faed4fdc3bb688fea70572931e81a6e0c2603b810338177148dfa2");
+    assert.equal(info.upstreamDmg.appVersion, "1.2.3");
+    assert.equal(info.source.shortCommit, "abcdef123456");
+    assert.equal(info.source.remote, "https://github.com/example/codex-desktop-linux.git");
+    assert.equal(info.packageProfile.id, "debian-family");
+    assert.equal(info.packageProfile.packageManager, "apt");
+    assert.deepEqual(info.linuxFeatures.enabled, ["read-aloud", "zed-opener"]);
+    assert.equal(info.linuxFeatures.configPath, undefined);
+  } finally {
+    fs.rmSync(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test("build info sanitizes staged source metadata from packaged update-builder", () => {
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "codex-build-info-staged-source-"));
+  try {
+    const sourceInfoDir = path.join(tempRoot, ".codex-linux");
+    fs.mkdirSync(sourceInfoDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(sourceInfoDir, "source-info.json"),
+      JSON.stringify({
+        commit: "0123456789abcdef",
+        shortCommit: "0123456789ab",
+        branch: "main",
+        remote: "https://user:secret@example.com/org/repo.git",
+        sourceInfoPath: "/home/builder/codex/.codex-linux/source-info.json",
+        provenance: "packaged-update-builder",
+      }),
+      "utf8",
+    );
+
+    const info = sourceInfo(tempRoot, {});
+    assert.equal(info.remote, "https://example.com/org/repo.git");
+    assert.equal(info.sourceInfoPath, undefined);
+  } finally {
+    fs.rmSync(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test("package profile distinguishes Fedora package managers by major version", () => {
+  const fedora40 = detectLinuxTargetContext({
+    osReleaseFields: { ID: "fedora", VERSION_ID: "40", PRETTY_NAME: "Fedora Linux 40" },
+    env: { PATH: "" },
+  });
+  const fedora41 = detectLinuxTargetContext({
+    osReleaseFields: { ID: "fedora", VERSION_ID: "41", PRETTY_NAME: "Fedora Linux 41" },
+    env: { PATH: "" },
+  });
+
+  assert.equal(packageProfile(fedora40).packageManager, "dnf");
+  assert.equal(packageProfile(fedora41).packageManager, "dnf5");
 });
 
 test("auto-discovered core patches can target a specific Linux distro", () => {
@@ -312,6 +493,7 @@ test("default core patch descriptors are grouped and unique", () => {
     "linux-avatar-overlay-mouse-passthrough",
     "linux-file-manager",
     "linux-tray",
+    "linux-build-info-tray",
     "linux-single-instance",
     "linux-computer-use-ui-feature",
     "linux-computer-use-plugin-gate",
@@ -325,6 +507,7 @@ test("default core patch descriptors are grouped and unique", () => {
     "linux-launch-actions",
     "linux-hotkey-window-prewarm",
     "linux-git-origins-source-fallback",
+    "automation-schedule-multi-time-rrule",
     "linux-app-sunset-gate",
     "linux-app-server-feature-enablement",
     "opaque-window-default-general-settings",
@@ -1108,6 +1291,17 @@ test("adds Linux tray support including the platform guard", () => {
     /\(E\|\|process\.platform===`linux`&&\(typeof codexLinuxIsTrayEnabled!==`function`\|\|codexLinuxIsTrayEnabled\(\)\)\)&&oe\(\);/,
   );
   assert.doesNotMatch(patched, /process\.platform===`linux`&&codexLinuxIsTrayEnabled\(\)/);
+});
+
+test("adds Linux build information to the tray menu", () => {
+  const patched = applyPatchTwice(applyLinuxBuildInfoTrayPatch, `${mainBundlePrefix}${trayBundleFixture()}`);
+
+  assert.match(patched, /function codexLinuxShowBuildInfo\(\)/);
+  assert.match(patched, /codex-linux-build-info\.json/);
+  assert.match(patched, /label:`Build Information`,click:\(\)=>\{codexLinuxShowBuildInfo\(\)\}/);
+  assert.match(patched, /Enabled features:/);
+  assert.match(patched, /Upstream DMG SHA256:/);
+  assert.match(patched, /Linux source revision:/);
 });
 
 test("adds Linux tray support for current minified window and startup identifiers", () => {
@@ -2284,6 +2478,59 @@ test("auto-approves the current Browser Use node_repl runtime config builder", (
     patched,
     /e\.Dn\(\{codexCliPath:o\.codexCliPath,nodePath:o\.nodePath,nodeReplPath:o\.nodeReplPath,tools:\{js:\{approval_mode:`approve`\}\},platform:o\.platform\}\)/,
   );
+});
+
+test("trusts Linux patched bundled Browser Use clients by hashing staged files", () => {
+  const resourcesRoot = fs.mkdtempSync(path.join(os.tmpdir(), "codex-browser-client-hash-"));
+  try {
+    const browserClient = path.join(
+      resourcesRoot,
+      "plugins",
+      "openai-bundled",
+      "plugins",
+      "browser",
+      "scripts",
+      "browser-client.mjs",
+    );
+    const chromeClient = path.join(
+      resourcesRoot,
+      "plugins",
+      "openai-bundled",
+      "plugins",
+      "chrome",
+      "scripts",
+      "browser-client.mjs",
+    );
+    fs.mkdirSync(path.dirname(browserClient), { recursive: true });
+    fs.mkdirSync(path.dirname(chromeClient), { recursive: true });
+    fs.writeFileSync(browserClient, "patched browser client\n", "utf8");
+    fs.writeFileSync(chromeClient, "patched chrome client\n", "utf8");
+    const browserHash = cryptoHash("patched browser client\n");
+    const chromeHash = cryptoHash("patched chrome client\n");
+    const source =
+      "\"use strict\";let o=require(`node:fs`),i=require(`node:path`),s=require(`node:crypto`),nt=[`upstream-hash`];function nn({trustedBrowserClientSha256s:e}){return e}function build(){let p=!0,v=!1,f=nt;return nn({trustedBrowserClientSha256s:p||v?f:[]})}";
+
+    const patched = applyPatchTwice(applyBrowserUseNodeReplApprovalPatch, source);
+
+    assert.match(patched, /^"use strict";function codexLinuxTrustedBrowserClientSha256s/);
+    assert.equal(
+      (patched.match(/function codexLinuxTrustedBrowserClientSha256s/g) || []).length,
+      1,
+    );
+    assert.match(patched, /codexLinuxTrustedBrowserClientSha256s\(f\)/);
+    const linuxHashes = vm.runInNewContext(`${patched};build();`, {
+      require,
+      process: { platform: "linux", resourcesPath: resourcesRoot },
+    });
+    assert.deepEqual(Array.from(linuxHashes), ["upstream-hash", browserHash, chromeHash]);
+    const darwinHashes = vm.runInNewContext(`${patched};build();`, {
+      require,
+      process: { platform: "darwin", resourcesPath: resourcesRoot },
+    });
+    assert.deepEqual(Array.from(darwinHashes), ["upstream-hash"]);
+  } finally {
+    fs.rmSync(resourcesRoot, { recursive: true, force: true });
+  }
 });
 
 test("keeps removed IAB visible patch export as a no-op", () => {
