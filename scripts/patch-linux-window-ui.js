@@ -31,7 +31,9 @@ const {
   patchAutomationScheduleAssets,
 } = require("./patches/automation-schedule.js");
 const {
+  applyLinuxChromeNativeHostRuntimePatch,
   applyLinuxChromePluginAutoInstallPatch,
+  patchLinuxChromeNativeHostRuntimeAssets,
 } = require("./patches/chrome-plugin.js");
 const {
   COMPUTER_USE_UI_ENV_VAR,
@@ -97,7 +99,9 @@ const {
 const {
   applyBrowserAnnotationScreenshotPatch,
   applyLinuxAppSunsetPatch,
+  applyLinuxConfigWriteVersionConflictPatch,
   applyLinuxOpaqueWindowsDefaultPatch,
+  applyLinuxFastModeModelGuardPatch,
   applySubagentNicknameMetadataPatch,
   patchCommentPreloadBundle,
 } = require("./patches/webview-assets.js");
@@ -161,7 +165,9 @@ module.exports = {
   applyLinuxBrowserUseIabVisibleOnCreatePatch,
   applyLinuxBuildInfoTrayPatch,
   applyLinuxChromeExtensionStatusPatch,
+  applyLinuxChromeNativeHostRuntimePatch,
   applyLinuxChromePluginAutoInstallPatch,
+  applyLinuxConfigWriteVersionConflictPatch,
   applyLinuxComputerUseFeaturePatch,
   applyLinuxComputerUseInstallFlowPatch,
   applyLinuxComputerUsePluginGatePatch,
@@ -178,6 +184,7 @@ module.exports = {
   applyLinuxMultiInstanceBootstrapPatch,
   applyLinuxOpaqueBackgroundPatch,
   applyLinuxOpaqueWindowsDefaultPatch,
+  applyLinuxFastModeModelGuardPatch,
   applyLinuxQuitGuardPatch,
   applyLinuxReadyToShowWindowStatePatch,
   applyLinuxRemoteControlConfigPreservationPatch,
@@ -210,6 +217,7 @@ module.exports = {
   patchKeybindsSettingsAssets,
   patchLinuxMultiInstanceBootstrap,
   patchLinuxAppUpdaterBridge,
+  patchLinuxChromeNativeHostRuntimeAssets,
   patchMainBundleSource,
   patchPackageJson,
   resolveDesktopName,
