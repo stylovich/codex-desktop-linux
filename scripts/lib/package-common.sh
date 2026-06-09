@@ -4,6 +4,10 @@ info() {
     echo "[INFO] $*" >&2
 }
 
+warn() {
+    echo "[WARN] $*" >&2
+}
+
 error() {
     echo "[ERROR] $*" >&2
     exit 1
@@ -573,18 +577,55 @@ function readWrapperVersion(repoDir) {
 }
 
 function sanitizeSourceInfo(info) {
+  const remote = sanitizeGitRemoteUrl(info.remote);
   return {
     ...info,
     version: info.version ?? readWrapperVersion(repoDir),
-    remote: sanitizeGitRemoteUrl(info.remote),
+    remote,
+    commitUrl: githubCommitUrl(remote, info.commit),
     provenance: info.provenance ?? "packaged-update-builder",
     recapturedAt: isoTimestamp(),
   };
 }
 
+function githubCommitUrl(remote, commit) {
+  const sha = typeof commit === "string" ? commit.trim() : "";
+  if (!/^[0-9a-f]{7,40}$/i.test(sha)) {
+    return null;
+  }
+  const value = sanitizeGitRemoteUrl(remote);
+  if (value == null) {
+    return null;
+  }
+
+  let ownerAndRepo = null;
+  try {
+    const url = new URL(value);
+    if (url.hostname.toLowerCase() !== "github.com") {
+      return null;
+    }
+    ownerAndRepo = url.pathname.replace(/^\/+/, "");
+  } catch {
+    const scpMatch = value.match(/^(?:[^@]+@)?github\.com:([^/]+\/[^/]+?)(?:\.git)?$/i);
+    if (scpMatch) {
+      ownerAndRepo = scpMatch[1];
+    }
+  }
+
+  if (ownerAndRepo == null) {
+    return null;
+  }
+  ownerAndRepo = ownerAndRepo.replace(/\/+$/, "").replace(/\.git$/i, "");
+  if (!/^[^/\s]+\/[^/\s]+$/.test(ownerAndRepo)) {
+    return null;
+  }
+  return `https://github.com/${ownerAndRepo}/commit/${sha}`;
+}
+
 const stagedInfo = readJsonFile(path.join(repoDir, ".codex-linux", "source-info.json"));
 const commit = process.env.CODEX_LINUX_SOURCE_COMMIT?.trim() || git(["rev-parse", "HEAD"]);
 const status = git(["status", "--porcelain"]);
+const remote = sanitizeGitRemoteUrl(process.env.CODEX_LINUX_SOURCE_REMOTE?.trim() || git(["remote", "get-url", "origin"]));
 const info = stagedInfo?.commit
   ? sanitizeSourceInfo(stagedInfo)
   : {
@@ -592,7 +633,8 @@ const info = stagedInfo?.commit
       shortCommit: commit == null ? null : commit.slice(0, 12),
       version: readWrapperVersion(repoDir),
       branch: process.env.CODEX_LINUX_SOURCE_BRANCH?.trim() || git(["branch", "--show-current"]),
-      remote: sanitizeGitRemoteUrl(process.env.CODEX_LINUX_SOURCE_REMOTE?.trim() || git(["remote", "get-url", "origin"])),
+      remote,
+      commitUrl: githubCommitUrl(remote, commit),
       describe: process.env.CODEX_LINUX_SOURCE_DESCRIBE?.trim() || git(["describe", "--always", "--dirty", "--tags"]),
       dirty: status == null ? null : status.length > 0,
       provenance: "packaged-update-builder",
@@ -628,6 +670,7 @@ stage_common_package_files() {
     cp -aT "$APP_DIR" "$app_root"
     mkdir -p "$app_root/.codex-linux"
     cp "$ICON_SOURCE" "$app_root/.codex-linux/$PACKAGE_NAME.png"
+    cp "$(resolve_tray_icon_source "$app_root")" "$app_root/.codex-linux/$PACKAGE_NAME-tray.png"
     render_desktop_entry_doctor_helper "$app_root/.codex-linux/codex-desktop-entry-doctor.sh"
     render_desktop_entry "$root/usr/share/applications/$PACKAGE_NAME.desktop"
     cp "$ICON_SOURCE" "$root/usr/share/icons/hicolor/256x256/apps/$PACKAGE_NAME.png"
@@ -643,6 +686,31 @@ stage_common_package_files() {
             "$app_root/.codex-linux/codex-no-updater-transition-cleanup.sh"
     fi
     render_packaged_runtime_helper "$app_root/.codex-linux/codex-packaged-runtime.sh"
+}
+
+resolve_tray_icon_source() {
+    local app_root="$1"
+    local assets_dir="$app_root/content/webview/assets"
+    local -a candidates=()
+    local candidate
+
+    if [ -d "$assets_dir" ]; then
+        while IFS= read -r -d '' candidate; do
+            candidates+=("$candidate")
+        done < <(find "$assets_dir" -maxdepth 1 -type f -name 'app-*.png' -print0 | sort -z)
+    fi
+
+    if [ "${#candidates[@]}" -eq 1 ]; then
+        printf '%s\n' "${candidates[0]}"
+        return 0
+    fi
+
+    if [ "${#candidates[@]}" -gt 1 ]; then
+        warn "Multiple tray icon candidates found in $assets_dir; falling back to package icon"
+    else
+        warn "Could not resolve a unique tray icon in $assets_dir; falling back to package icon"
+    fi
+    printf '%s\n' "$ICON_SOURCE"
 }
 
 stage_update_builder_bundle() {

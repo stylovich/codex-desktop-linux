@@ -1,7 +1,9 @@
 "use strict";
 
 const {
+  applyLinuxAboutDialogPatch,
   applyLinuxWindowOptionsPatch,
+  applyLinuxNativeTitlebarPatch,
   applyLinuxMenuPatch,
   applyLinuxSetIconPatch,
   applyLinuxReadyToShowWindowStatePatch,
@@ -16,6 +18,13 @@ const { applyLinuxAvatarOverlayMousePassthroughPatch } = require("../../../../av
 
 module.exports = [
   {
+    id: "linux-about-dialog",
+    phase: "main-bundle",
+    order: 55,
+    ciPolicy: "optional",
+    apply: (source, context) => applyLinuxAboutDialogPatch(source, context.iconPathExpression),
+  },
+  {
     id: "linux-window-options",
     phase: "main-bundle",
     order: 50,
@@ -28,6 +37,13 @@ module.exports = [
     order: 60,
     ciPolicy: "optional",
     apply: applyLinuxMenuPatch,
+  },
+  {
+    id: "linux-native-titlebar",
+    phase: "main-bundle",
+    order: 85,
+    ciPolicy: "optional",
+    apply: applyLinuxNativeTitlebarPatch,
   },
   {
     id: "linux-set-icon",
