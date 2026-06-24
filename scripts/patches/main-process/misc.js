@@ -1,5 +1,8 @@
 "use strict";
 
+const fs = require("node:fs");
+const path = require("node:path");
+
 const {
   findCallBlock,
   requireName,
@@ -53,6 +56,84 @@ function applyLinuxFileManagerPatch(currentSource) {
   return patchedSource;
 }
 
+function applyLinuxWorkerFileManagerPatch(currentSource) {
+  const block = findCallBlock(currentSource, "id:`fileManager`");
+  if (block == null) {
+    console.warn("Failed to apply Linux Worker File Manager Patch");
+    return currentSource;
+  }
+
+  if (block.text.includes("linux:{")) {
+    return currentSource;
+  }
+
+  const fsVar = requireName(currentSource, "node:fs");
+  const pathVar = requireName(currentSource, "node:path");
+  if (fsVar == null || pathVar == null) {
+    console.warn("Failed to apply Linux Worker File Manager Patch");
+    return currentSource;
+  }
+
+  const insertionPoint = block.text.lastIndexOf("}});");
+  if (insertionPoint === -1) {
+    console.warn("Failed to apply Linux Worker File Manager Patch");
+    return currentSource;
+  }
+
+  const linuxFileManager =
+    `,linux:{label:\`File Manager\`,icon:\`apps/file-explorer.png\`,detect:()=>\`linux-file-manager\`,args:e=>[e],open:async({path:e})=>{let t=e;for(;;){try{if(${fsVar}.existsSync(t))break}catch{}let e=${pathVar}.dirname(t);if(e===t)break;t=e}try{${fsVar}.existsSync(t)&&${fsVar}.statSync(t).isFile()&&(t=${pathVar}.dirname(t))}catch{}let i=await(await import(\`electron\`)).shell.openPath(t);if(i)throw Error(i)}}`;
+
+  const patchedBlock =
+    block.text.slice(0, insertionPoint + 1) +
+    linuxFileManager +
+    block.text.slice(insertionPoint + 1);
+  const patchedSource =
+    currentSource.slice(0, block.start) + patchedBlock + currentSource.slice(block.end);
+
+  const patchedBlockCheck = patchedSource.slice(block.start, block.start + patchedBlock.length);
+  if (
+    !patchedBlockCheck.includes("linux:{label:`File Manager`") ||
+    !patchedBlockCheck.includes("detect:()=>`linux-file-manager`") ||
+    !patchedBlockCheck.includes("import(`electron`)).shell.openPath(t)")
+  ) {
+    console.warn("Failed to apply Linux Worker File Manager Patch");
+    return currentSource;
+  }
+
+  return patchedSource;
+}
+
+function patchLinuxWorkerFileManagerTarget(extractedDir) {
+  const workerPath = path.join(extractedDir, ".vite", "build", "worker.js");
+  if (!fs.existsSync(workerPath)) {
+    console.warn(
+      `WARN: Could not find worker bundle at ${workerPath} — skipping Linux Worker File Manager Patch`,
+    );
+    return { matched: 0, changed: 0, reason: "worker bundle not found" };
+  }
+
+  const source = fs.readFileSync(workerPath, "utf8");
+  const patchedSource = applyLinuxWorkerFileManagerPatch(source);
+  if (patchedSource === source) {
+    const hasTarget = source.includes("id:`fileManager`");
+    const hasLinuxTarget = source.includes("linux:{label:`File Manager`");
+    const hasPatchableBlock = findCallBlock(source, "id:`fileManager`") != null;
+    return {
+      matched: hasPatchableBlock ? 1 : 0,
+      changed: 0,
+      reason: !hasTarget
+        ? "fileManager target not found"
+        : hasLinuxTarget
+          ? null
+          : hasPatchableBlock
+            ? "fileManager target found but Linux worker patch was not applied"
+            : "fileManager target found but patchable block not found",
+    };
+  }
+  fs.writeFileSync(workerPath, patchedSource, "utf8");
+  return { matched: 1, changed: 1 };
+}
+
 function applyLinuxGitOriginsSourceFallbackPatch(currentSource) {
   const fallbackSource = "linux_git_origins_missing_source_fallback";
   if (currentSource.includes(`source:\`${fallbackSource}\`,requestKind:`)) {
@@ -78,6 +159,71 @@ function applyLinuxGitOriginsSourceFallbackPatch(currentSource) {
   }
 
   return currentSource;
+}
+
+function applyLinuxOwlFeatureBindingFallbackPatch(currentSource) {
+  if (!currentSource.includes("electron_common_owl_features")) {
+    return currentSource;
+  }
+
+  const alreadyPatchedRegex =
+    /function [A-Za-z_$][\w$]*\(\)\{let ([A-Za-z_$][\w$]*)=process\._linkedBinding;if\(typeof \1!=`function`\)return \{isOwlFeatureEnabled:\(\)=>!1\};try\{return [A-Za-z_$][\w$]*\.parse\(\1\.call\(process,`electron_common_owl_features`\)\)\}catch\(([A-Za-z_$][\w$]*)\)\{if\(String\(\2\?\.message\?\?\2\)\.includes\(`No such binding was linked`\)\)return \{isOwlFeatureEnabled:\(\)=>!1\};throw \2\}\}/u;
+  if (alreadyPatchedRegex.test(currentSource)) {
+    return currentSource;
+  }
+
+  const loaderRegex =
+    /function ([A-Za-z_$][\w$]*)\(\)\{let ([A-Za-z_$][\w$]*)=process\._linkedBinding;if\(typeof \2!=`function`\)throw Error\(`Owl feature binding is unavailable`\);return ([A-Za-z_$][\w$]*)\.parse\(\2\.call\(process,`electron_common_owl_features`\)\)\}/u;
+  const match = currentSource.match(loaderRegex);
+  if (match == null) {
+    console.warn(
+      "WARN: Could not find Owl feature binding loader - skipping Linux Owl feature fallback patch",
+    );
+    return currentSource;
+  }
+
+  const [, fnName, linkedBindingVar, schemaVar] = match;
+  const fallback = "{isOwlFeatureEnabled:()=>!1}";
+  return currentSource.replace(
+    loaderRegex,
+    `function ${fnName}(){let ${linkedBindingVar}=process._linkedBinding;if(typeof ${linkedBindingVar}!=\`function\`)return ${fallback};try{return ${schemaVar}.parse(${linkedBindingVar}.call(process,\`electron_common_owl_features\`))}catch(t){if(String(t?.message??t).includes(\`No such binding was linked\`))return ${fallback};throw t}}`,
+  );
+}
+
+function patchLinuxOwlFeatureBindingFallbackAssets(extractedDir) {
+  const buildDir = path.join(extractedDir, ".vite", "build");
+  if (!fs.existsSync(buildDir)) {
+    return { matched: 0, changed: 0 };
+  }
+
+  const candidates = fs
+    .readdirSync(buildDir)
+    .filter((name) => name.endsWith(".js"))
+    .sort()
+    .map((name) => path.join(buildDir, name))
+    .filter((candidate) => {
+      try {
+        return fs.readFileSync(candidate, "utf8").includes("electron_common_owl_features");
+      } catch {
+        return false;
+      }
+    });
+
+  let changed = 0;
+  const pendingWrites = [];
+  for (const candidate of candidates) {
+    const currentSource = fs.readFileSync(candidate, "utf8");
+    const patchedSource = applyLinuxOwlFeatureBindingFallbackPatch(currentSource);
+    if (patchedSource !== currentSource) {
+      changed += 1;
+      pendingWrites.push({ filePath: candidate, patchedSource });
+    }
+  }
+  for (const { filePath, patchedSource } of pendingWrites) {
+    fs.writeFileSync(filePath, patchedSource, "utf8");
+  }
+
+  return { matched: candidates.length, changed };
 }
 
 function applyLinuxRemoteControlConfigPreservationPatch(currentSource) {
@@ -109,6 +255,56 @@ function applyLinuxRemoteControlConfigPreservationPatch(currentSource) {
     "WARN: Could not find remote-control config stripper guard — skipping Linux remote-control config preservation patch",
   );
   return currentSource;
+}
+
+function applyLinuxXdgDocumentsDirPatch(currentSource) {
+  if (currentSource.includes("codexLinuxXdgDocumentsDir")) {
+    return currentSource;
+  }
+
+  const fsVar = requireName(currentSource, "node:fs");
+  if (fsVar == null) {
+    console.warn("WARN: Could not find fs require — skipping Linux XDG documents dir patch");
+    return currentSource;
+  }
+
+  const documentsDirRegex =
+    /function ([A-Za-z_$][\w$]*)\(\{desktopPaths:([A-Za-z_$][\w$]*),homeDir:([A-Za-z_$][\w$]*),platform:([A-Za-z_$][\w$]*)\}\)\{return ([A-Za-z_$][\w$]*)\(\3,\2\.getPath\(`home`\),\4\)\?\2\.getPath\(`documents`\):([A-Za-z_$][\w$]*)\(\4\)\.join\(\3,`Documents`\)\}/u;
+  const match = currentSource.match(documentsDirRegex);
+  if (match == null) {
+    if (
+      currentSource.includes("getPath(`documents`)") &&
+      currentSource.includes(".join(") &&
+      currentSource.includes("`Documents`")
+    ) {
+      console.warn(
+        "WARN: Could not find documents directory resolver — skipping Linux XDG documents dir patch",
+      );
+    }
+    return currentSource;
+  }
+
+  const [, fnName, desktopPathsVar, homeDirVar, platformVar, sameHomeFn, pathFactoryFn] = match;
+  const helper = [
+    "function codexLinuxXdgDocumentsDir({fs:e,homeDir:t,path:n}){try{",
+    "let r=process.env.XDG_CONFIG_HOME?.trim(),i=r&&n.isAbsolute(r)?n.join(r,`user-dirs.dirs`):n.join(t,`.config`,`user-dirs.dirs`);",
+    "if(!e.existsSync(i))return null;",
+    "let a=e.readFileSync(i,`utf8`).match(/^XDG_DOCUMENTS_DIR=([\"'])(.*)\\1/m);",
+    "if(a==null)return null;",
+    "let o=a[2].replace(/\\\\(.)/g,`$1`);",
+    "if(o===`$HOME`)return t;",
+    "if(o.startsWith(`$HOME/`))return n.join(t,o.slice(6));",
+    "if(o.startsWith(`~/`))return n.join(t,o.slice(2));",
+    "return n.isAbsolute(o)?o:n.join(t,o)",
+    "}catch{return null}}",
+  ].join("");
+  const patchedFn =
+    `${helper}function ${fnName}({desktopPaths:${desktopPathsVar},homeDir:${homeDirVar},platform:${platformVar}}){` +
+    `if(${platformVar}===\`linux\`){let __codexLinuxDocumentsDir=codexLinuxXdgDocumentsDir({fs:${fsVar},homeDir:${homeDirVar},path:${pathFactoryFn}(${platformVar})});` +
+    "if(__codexLinuxDocumentsDir!=null)return __codexLinuxDocumentsDir}" +
+    `return ${sameHomeFn}(${homeDirVar},${desktopPathsVar}.getPath(\`home\`),${platformVar})?${desktopPathsVar}.getPath(\`documents\`):${pathFactoryFn}(${platformVar}).join(${homeDirVar},\`Documents\`)}`;
+
+  return currentSource.replace(documentsDirRegex, () => patchedFn);
 }
 
 function applyLinuxLocalAppServerFeatureEnablementHandlerPatch(currentSource) {
@@ -167,5 +363,10 @@ module.exports = {
   applyLinuxFileManagerPatch,
   applyLinuxGitOriginsSourceFallbackPatch,
   applyLinuxLocalAppServerFeatureEnablementHandlerPatch,
+  applyLinuxOwlFeatureBindingFallbackPatch,
+  applyLinuxWorkerFileManagerPatch,
+  patchLinuxOwlFeatureBindingFallbackAssets,
+  patchLinuxWorkerFileManagerTarget,
   applyLinuxRemoteControlConfigPreservationPatch,
+  applyLinuxXdgDocumentsDirPatch,
 };
