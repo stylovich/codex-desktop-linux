@@ -545,7 +545,7 @@ function applyLinuxBrowserUseExternalAvailabilityPatch(currentSource) {
   const availabilityPattern =
     /let ([A-Za-z_$][\w$]*)=([A-Za-z_$][\w$]*)\(([A-Za-z_$][\w$]*)\),([A-Za-z_$][\w$]*)=([A-Za-z_$][\w$]*)===`chrome-extension`\|\|([A-Za-z_$][\w$]*)&&\1\.enabled&&!\1\.isLoading,([A-Za-z_$][\w$]*)=\5===`chrome-extension`\?!1:\1\.isLoading,/g;
 
-  const patchedSource = currentSource.replace(
+  let patchedSource = currentSource.replace(
     availabilityPattern,
     (
       match,
@@ -569,6 +569,22 @@ function applyLinuxBrowserUseExternalAvailabilityPatch(currentSource) {
     },
   );
 
+  if (!changed) {
+    // 26.623 refactored the inline availability gate into a status-string helper:
+    //   function X({isExternalBrowserUseFeatureEnabled:e,isExternalBrowserUseFeatureLoading:t,
+    //     isExternalBrowserUseGateEnabled:n,windowType:r}){return r===`chrome-extension`?`available`:...}
+    // Treat Linux like chrome-extension so the resolved status is `available`.
+    const statusFnPattern =
+      /(function [A-Za-z_$][\w$]*\(\{isExternalBrowserUseFeatureEnabled:[A-Za-z_$][\w$]*,isExternalBrowserUseFeatureLoading:[A-Za-z_$][\w$]*,isExternalBrowserUseGateEnabled:[A-Za-z_$][\w$]*,windowType:([A-Za-z_$][\w$]*)\}\)\{return )\2===`chrome-extension`\?`available`:/;
+    patchedSource = patchedSource.replace(
+      statusFnPattern,
+      (match, prefix, windowTypeVar) => {
+        changed = true;
+        return `${prefix}${windowTypeVar}===\`chrome-extension\`||navigator.userAgent.includes(\`Linux\`)?\`available\`:`;
+      },
+    );
+  }
+
   if (changed || alreadyPatched()) {
     return patchedSource;
   }
@@ -591,6 +607,7 @@ function applyLinuxAppServerFeatureEnablementPatch(currentSource) {
     "remote_control",
     "remote_plugin",
     "tool_call_mcp_elicitation",
+    "tool_search",
     "tool_suggest",
   ]);
   const defaultFeaturesMarker = "statsig_default_enable_features";
@@ -614,19 +631,22 @@ function applyLinuxAppServerFeatureEnablementPatch(currentSource) {
 
   function sanitizeFeatureArrayDeclaration(source, arrayVar) {
     const arrayDeclarationRegex = new RegExp(
-      `(var\\s+${escapeRegExp(arrayVar)}=\\[)([^\\]]*?)(\\])`,
+      `(^|[^\\w$])((?:var\\s+)?${escapeRegExp(arrayVar)}=\\[)([^\\]]*?)(\\])`,
       "u",
     );
     const match = source.match(arrayDeclarationRegex);
     if (match == null) {
       return source;
     }
-    const [, prefix, featureArrayItems, suffix] = match;
+    const [, boundary, prefix, featureArrayItems, suffix] = match;
     const supportedFeatureArrayItems = sanitizeFeatureArrayItems(featureArrayItems);
     if (supportedFeatureArrayItems === featureArrayItems) {
       return source;
     }
-    return source.replace(arrayDeclarationRegex, `${prefix}${supportedFeatureArrayItems}${suffix}`);
+    return source.replace(
+      arrayDeclarationRegex,
+      `${boundary}${prefix}${supportedFeatureArrayItems}${suffix}`,
+    );
   }
 
   const featureArrayRegex =
@@ -1018,9 +1038,11 @@ function applySubagentNicknameMetadataPatch(currentSource) {
   if (
     patchedSource === currentSource &&
     !(sourceShapePatchedRegex.test(currentSource) && nicknamePatchedRegex.test(currentSource)) &&
-    (currentSource.includes("agentNickname") ||
-      currentSource.includes("agent_nickname") ||
-      currentSource.includes("thread_spawn"))
+    // `thread_spawn` uniquely marks the subagent metadata module. Other webview
+    // chunks reference `agentNickname` without carrying these needles, so gate
+    // the warning on `thread_spawn` to avoid false drift alarms when the patch
+    // pattern matches the shared bundle alongside unrelated chunks.
+    currentSource.includes("thread_spawn")
   ) {
     console.warn("WARN: Could not find subagent nickname metadata needles — skipping metadata shape patch");
   }
@@ -1231,6 +1253,13 @@ function applyBrowserAnnotationScreenshotPatch(currentSource) {
       "Ze=(qe?A?.kind===`comment`?ge:[]:Xe==null?ge:ge.filter(e=>e.id!==Xe.id)).flatMap";
     const electron42CommentPreloadMarkersPatch =
       "Ze=(qe?A?.kind===`comment`?Ke:[]:Xe==null?ge:ge.filter(e=>e.id!==Xe.id)).flatMap";
+    // 26.623 refactored the marker-list computation into imperative form and
+    // adopted the screenshot fix natively: when a comment is selected it now
+    // assigns `it=rt?[j.annotation]:ye`, i.e. only the selected comment's marker
+    // is shown in screenshot mode. Detect that native-safe shape so we skip the
+    // patch without warning.
+    const nativeCommentPreloadMarkersRegex =
+      /([A-Za-z_$][\w$]*)\?\.kind===`comment`\?([A-Za-z_$][\w$]*)=([A-Za-z_$][\w$]*)\?\[\1\.annotation\]:([A-Za-z_$][\w$]*):\3\|\|[A-Za-z_$][\w$]*\?\2=\[\]:[A-Za-z_$][\w$]*!=null&&\(\2=\4\.filter\(e=>e\.id!==[A-Za-z_$][\w$]*\.id\)\)/;
     if (patchedSource.includes(currentMarkersPatch)) {
       // Already patched.
     } else if (patchedSource.includes(currentSelectedMarkersPatch)) {
@@ -1267,6 +1296,9 @@ function applyBrowserAnnotationScreenshotPatch(currentSource) {
         electron42CommentPreloadMarkersNeedle,
         electron42CommentPreloadMarkersPatch,
       );
+    } else if (nativeCommentPreloadMarkersRegex.test(patchedSource)) {
+      // Already native: upstream now scopes screenshot markers to the selected
+      // comment, so no marker patch is required for this build.
     } else {
       console.warn("WARN: Could not find browser annotation screenshot markers — skipping screenshot marker patch");
     }
@@ -1791,6 +1823,34 @@ function applyLinuxFastModeModelGuardPatch(currentSource) {
   return currentSource;
 }
 
+function applyLinuxSkillsListDedupePatch(currentSource) {
+  if (currentSource.includes("function codexLinuxDedupeSkills(")) {
+    return currentSource;
+  }
+
+  if (
+    !currentSource.includes("list-skills-for-host") ||
+    !currentSource.includes("function IJ(e){return e.skills}")
+  ) {
+    return currentSource;
+  }
+
+  const flatMapNeedle = "b=y.flatMap(IJ)";
+  const flatMapPatch = "b=codexLinuxDedupeSkills(y.flatMap(IJ))";
+  if (!currentSource.includes(flatMapNeedle)) {
+    console.warn(
+      "WARN: Could not find skills list flatten insertion point — skipping Linux skills dedupe patch",
+    );
+    return currentSource;
+  }
+
+  const helper =
+    "function codexLinuxDedupeSkills(e){try{let t=[],n=new Set;for(let r of e??[]){if(r==null){t.push(r);continue}let e=r.path??r.id??r.privateIdentity;if(e==null){t.push(r);continue}let i=String(e);if(n.has(i))continue;n.add(i),t.push(r)}return t}catch{return e}}";
+  return currentSource
+    .replace(flatMapNeedle, flatMapPatch)
+    .replace("function IJ(e){return e.skills}", `${helper}function IJ(e){return e.skills}`);
+}
+
 function patchCommentPreloadBundle(extractedDir) {
   const commentPreloadBundle = path.join(extractedDir, ".vite", "build", "comment-preload.js");
   if (!fs.existsSync(commentPreloadBundle)) {
@@ -1828,6 +1888,7 @@ module.exports = {
   applyLinuxWindowControlsSafeAreaPatch,
   applyLinuxSafeMonospaceFontStackPatch,
   applyLinuxFastModeModelGuardPatch,
+  applyLinuxSkillsListDedupePatch,
   applyLocalEnvironmentActionModalDraftPatch,
   applySubagentNicknameMetadataPatch,
   patchCommentPreloadBundle,
