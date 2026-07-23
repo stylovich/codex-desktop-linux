@@ -3,6 +3,7 @@ let
   supportedFeatureIds = [
     "appshots"
     "codex-wrapper-updater"
+    "directory-only-working-tree-watch"
     "frameless-titlebar"
     "global-dictation"
     "mcp-helper-reaper"
@@ -12,6 +13,7 @@ let
     "pet-overlay"
     "remote-control-ui"
     "remote-mobile-control"
+    "shallow-repository-watches"
     "ui-tweaks"
   ];
 

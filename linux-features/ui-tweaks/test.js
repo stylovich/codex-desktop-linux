@@ -7,6 +7,9 @@ const os = require("node:os");
 const path = require("node:path");
 const test = require("node:test");
 
+require("./dock-icon.test.js");
+require("./suggested-prompts.test.js");
+
 const {
   discoverLinuxFeatureManifests,
   loadLinuxFeaturePatchDescriptors,
@@ -173,6 +176,13 @@ test("ui-tweaks is discoverable and disabled until listed in features.json", () 
           "optional",
         ],
         ["feature:ui-tweaks:reasoning-effort-labels-english", "webview-asset", "optional"],
+        ["feature:ui-tweaks:appearance-dock-icon-main-process", "main-bundle", "optional"],
+        ["feature:ui-tweaks:appearance-dock-icon-settings-row", "webview-asset", "optional"],
+        ["feature:ui-tweaks:appearance-dock-icon-settings-search", "webview-asset", "optional"],
+        ["feature:ui-tweaks:home-suggested-prompts-main-process", "main-bundle", "optional"],
+        ["feature:ui-tweaks:home-suggested-prompts-app-page", "webview-asset", "optional"],
+        ["feature:ui-tweaks:home-suggested-prompts-settings-row", "webview-asset", "optional"],
+        ["feature:ui-tweaks:home-suggested-prompts-content", "webview-asset", "optional"],
       ],
     );
   } finally {
@@ -381,6 +391,34 @@ test("reasoning effort labels stay in English in the Simplified Chinese locale",
   assert.doesNotMatch("zh-TW-rBlCyjlT.js", ZH_CN_LOCALE_ASSET_PATTERN);
 });
 
+test("reasoning effort label drift warns and leaves the asset unchanged", () => {
+  const source = simplifiedChineseLocaleFixture().replace(
+    '"composer.mode.local.reasoning.ultra.label":`极高`',
+    '"composer.mode.local.reasoning.ultra.missing":`极高`',
+  );
+  const { value, warnings } = withCapturedWarns(() =>
+    applyEnglishReasoningLabels(source, { warnOnMissingMarkers: true }),
+  );
+
+  assert.equal(value, source);
+  assert.equal(warnings.length, 1);
+  assert.match(warnings[0], /composer\.mode\.local\.reasoning\.ultra\.label/);
+});
+
+test("mixed reasoning effort label markers warn and remain byte-identical", () => {
+  const source = simplifiedChineseLocaleFixture().replace(
+    '"composer.mode.local.reasoning.medium.label":`中`',
+    '"composer.mode.local.reasoning.medium.label":`Medium`',
+  );
+  const { value, warnings } = withCapturedWarns(() =>
+    applyEnglishReasoningLabels(source, { warnOnMissingMarkers: true }),
+  );
+
+  assert.equal(value, source);
+  assert.equal(warnings.length, 1);
+  assert.match(warnings[0], /mixed applied and untranslated reasoning label markers/i);
+});
+
 test("English reasoning effort labels can be disabled", () => {
   const source = simplifiedChineseLocaleFixture();
   const context = {
@@ -466,17 +504,18 @@ test("feature manifest defaults reach descriptor context through the feature loa
     const [descriptor] = loadLinuxFeaturePatchDescriptors({ featuresRoot });
     const patched = descriptor.apply(projectBundleFixture(), {});
 
-    assert.match(patched, /font-weight: 700 !important; padding-top: 0.25rem;/);
+    assert.match(patched, /font-weight: 700 !important;/);
+    assert.doesNotMatch(patched, /padding-top/);
   } finally {
     fs.rmSync(tempDir, { recursive: true, force: true });
   }
 });
 
-test("default project name style is bold with top padding and no forced color", () => {
+test("default project name style is bold without changing fixed row geometry", () => {
   const featureJson = JSON.parse(fs.readFileSync(path.join(__dirname, "feature.json"), "utf8"));
   assert.equal(featureJson.tweaks.sidebar.projectName.style, DEFAULT_PROJECT_NAME_STYLE);
   assert.match(DEFAULT_PROJECT_NAME_STYLE, /font-weight:\s*700\s*!important/);
-  assert.match(DEFAULT_PROJECT_NAME_STYLE, /padding-top:\s*0\.25rem/);
+  assert.doesNotMatch(DEFAULT_PROJECT_NAME_STYLE, /(?:padding|margin|height)/i);
   assert.doesNotMatch(DEFAULT_PROJECT_NAME_STYLE, /color/i);
   assert.doesNotMatch(sidebarProjectNameCss(DEFAULT_PROJECT_NAME_STYLE), /#000|black/i);
 });
@@ -535,7 +574,8 @@ test("invalid feature settings warn and fall back to defaults", () => {
     const patched = descriptors[0].apply(projectBundleFixture(), {});
 
     assert.match(warnings.join("\n"), /WARN: Linux feature 'ui-tweaks' settings/);
-    assert.match(patched, /font-weight: 700 !important; padding-top: 0.25rem;/);
+    assert.match(patched, /font-weight: 700 !important;/);
+    assert.doesNotMatch(patched, /padding-top/);
   } finally {
     fs.rmSync(tempDir, { recursive: true, force: true });
   }
@@ -600,7 +640,8 @@ test("invalid and empty styles warn and fall back without throwing", () => {
     );
 
     assert.match(value, new RegExp(STYLE_ID));
-    assert.match(value, /font-weight: 700 !important; padding-top: 0.25rem;/);
+    assert.match(value, /font-weight: 700 !important;/);
+    assert.doesNotMatch(value, /padding-top/);
     assert.equal(warnings.length, 1);
     assert.match(warnings[0], /^WARN: ui-tweaks sidebar project name style/);
   }
@@ -625,7 +666,8 @@ test("unsafe styles warn, stay scoped, and fall back to the default", () => {
   );
 
   assert.match(value, new RegExp(STYLE_ID));
-  assert.match(value, /font-weight: 700 !important; padding-top: 0.25rem;/);
+  assert.match(value, /font-weight: 700 !important;/);
+  assert.doesNotMatch(value, /padding-top/);
   assert.doesNotMatch(value, /body\{display:none\}/);
   assert.equal(value.includes(unsafeStyle), false);
   assert.equal(warnings.length, 1);
