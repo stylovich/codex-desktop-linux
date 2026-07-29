@@ -225,28 +225,6 @@ function inferSettingsRowExportName(source) {
   return null;
 }
 
-function importBindings(source) {
-  const bindings = new Map();
-  const importPattern = /import\{([^}]*)\}from"\.\/([^"]+)"/g;
-  let match;
-  while ((match = importPattern.exec(source)) != null) {
-    const [, specifiers, assetName] = match;
-    for (const rawSpecifier of specifiers.split(",")) {
-      const specifier = rawSpecifier.trim();
-      if (specifier.length === 0) {
-        continue;
-      }
-      const aliased = specifier.match(/^([A-Za-z_$][\w$]*)\s+as\s+([A-Za-z_$][\w$]*)$/);
-      if (aliased != null) {
-        bindings.set(aliased[2], { assetName, exportName: aliased[1] });
-      } else {
-        bindings.set(specifier, { assetName, exportName: specifier });
-      }
-    }
-  }
-  return bindings;
-}
-
 function inferRuntimeDependenciesFromSettingsSource(source) {
   const routeFactoryLocal = source.match(
     /["'](?:linux-desktop|general-settings)["']:\s*([A-Za-z_$][\w$]*)\(async\(\)=>/,
@@ -304,13 +282,6 @@ function inferRuntimeDependenciesFromSettingsSource(source) {
     || jsxFactoryMatch.index < initializationStart
     || jsxFactoryMatch.index > initializationEnd
   ) {
-    return null;
-  }
-
-  const bindings = importBindings(source);
-  const jsxBinding = bindings.get(jsxFactoryLocal);
-  const reactBinding = bindings.get(reactFactoryLocal);
-  if (jsxBinding == null || reactBinding == null) {
     return null;
   }
 
@@ -661,6 +632,38 @@ function collectLinuxDesktopVisibilityPatch(extractedDir) {
   }];
 }
 
+function collectLinuxDesktopNavigationGroupPatch(extractedDir) {
+  const webviewAssetsDir = path.join(extractedDir, "webview", "assets");
+  if (!fs.existsSync(webviewAssetsDir)) {
+    throw new Error(`Required Keybinds settings patch failed: missing webview assets directory ${webviewAssetsDir}`);
+  }
+
+  const candidates = fs
+    .readdirSync(webviewAssetsDir)
+    .filter((name) => /^settings-page-[^.]+\.js$/.test(name))
+    .sort()
+    .filter((name) => {
+      const source = fs.readFileSync(path.join(webviewAssetsDir, name), "utf8");
+      return source.includes("id:`settings.nav.heading.personal`");
+    });
+
+  if (candidates.length !== 1) {
+    throw new Error(
+      `Required Keybinds settings patch failed: could not find exactly one current settings navigation group asset (found ${candidates.length})`,
+    );
+  }
+
+  const [candidate] = candidates;
+  const filePath = path.join(webviewAssetsDir, candidate);
+  const currentSource = fs.readFileSync(filePath, "utf8");
+  return [{
+    filePath,
+    currentSource,
+    patchedSource: applyLinuxDesktopSettingsNavigationGroupPatch(currentSource),
+    patchFn: applyLinuxDesktopSettingsNavigationGroupPatch,
+  }];
+}
+
 function collectLinuxDesktopIconMapPatches(extractedDir) {
   const webviewAssetsDir = path.join(extractedDir, "webview", "assets");
   if (!fs.existsSync(webviewAssetsDir)) {
@@ -703,18 +706,12 @@ function collectLinuxDesktopRouteAndNavigationPatches(
     throw new Error(`Required Keybinds settings patch failed: missing webview assets directory ${webviewAssetsDir}`);
   }
 
-  // Newer builds split the lazy settings route map out of `app-main-*.js`/`index-*.js`
-  // into hashed concatenation chunks. Some keep the `app-initial~app-main~*`
-  // prefix; others are settings-page chunks without that prefix. The
-  // icon/navigation metadata still lives in a settings-page chunk, so scan any
-  // hashed settings-page JS file plus the legacy app-main/index candidates.
   const candidates = fs
     .readdirSync(webviewAssetsDir)
-    .filter((name) => /^(?:(?:app-main|index)-|app-initial~app-main~).*\.js$/.test(name) || /(?:^|~)settings-page(?:[-~].*)?\.js$/.test(name))
+    .filter((name) => /^app-initial-[^.]+\.js$/.test(name))
     .sort();
 
   let routeMatched = false;
-  let navigationMatched = false;
   const patches = [];
   for (const candidate of candidates) {
     const filePath = path.join(webviewAssetsDir, candidate);
@@ -723,10 +720,6 @@ function collectLinuxDesktopRouteAndNavigationPatches(
     if (isSettingsRouteBundleSource(currentSource)) {
       routeMatched = true;
       patchedSource = applyLinuxDesktopSettingsRoutePatch(patchedSource, routeAssetSpecifier);
-    }
-    if (isSettingsNavigationBundleSource(currentSource)) {
-      navigationMatched = true;
-      patchedSource = applyLinuxDesktopSettingsNavigationPatch(patchedSource);
     }
     if (patchedSource !== currentSource) {
       patches.push({
@@ -738,9 +731,6 @@ function collectLinuxDesktopRouteAndNavigationPatches(
           if (isSettingsRouteBundleSource(nextSource)) {
             nextSource = applyLinuxDesktopSettingsRoutePatch(nextSource, routeAssetSpecifier);
           }
-          if (isSettingsNavigationBundleSource(nextSource)) {
-            nextSource = applyLinuxDesktopSettingsNavigationPatch(nextSource);
-          }
           return nextSource;
         },
       });
@@ -750,10 +740,6 @@ function collectLinuxDesktopRouteAndNavigationPatches(
   if (!routeMatched) {
     throw new Error("Required Keybinds settings patch failed: could not find Linux desktop settings route bundle");
   }
-  if (!navigationMatched) {
-    throw new Error("Required Keybinds settings patch failed: could not find Linux desktop settings navigation bundle");
-  }
-
   return patches;
 }
 
@@ -847,6 +833,7 @@ function patchKeybindsSettingsAssets(extractedDir) {
         isSettingsSectionsMetadataBundleSource,
         applyLinuxDesktopSettingsSectionsPatch,
       ),
+      ...collectLinuxDesktopNavigationGroupPatch(extractedDir),
       ...collectLinuxDesktopVisibilityPatch(extractedDir),
       ...collectOptionalMatchingAssetPatches(
         extractedDir,
@@ -964,6 +951,29 @@ function applyLinuxDesktopSettingsSectionsPatch(currentSource) {
   }
 
   return patchedSource;
+}
+
+function applyLinuxDesktopSettingsNavigationGroupPatch(currentSource) {
+  const unpatchedGroupPattern =
+    /(\{key:`personal`,heading:[^;]{0,1200}?id:`settings\.nav\.heading\.personal`[^;]{0,1200}?slugs:\[`general-settings`,)(?!`linux-desktop`,)/g;
+  const patchedGroupPattern =
+    /\{key:`personal`,heading:[^;]{0,1200}?id:`settings\.nav\.heading\.personal`[^;]{0,1200}?slugs:\[`general-settings`,`linux-desktop`,/g;
+  const unpatchedCount = currentSource.match(unpatchedGroupPattern)?.length ?? 0;
+  const patchedCount = currentSource.match(patchedGroupPattern)?.length ?? 0;
+
+  if (unpatchedCount === 0 && patchedCount === 1) {
+    return currentSource;
+  }
+  if (unpatchedCount !== 1 || patchedCount !== 0) {
+    throw new Error(
+      `Required Keybinds settings patch failed: expected exactly one current personal settings navigation group (found ${unpatchedCount}, ${patchedCount} already patched)`,
+    );
+  }
+
+  return currentSource.replace(
+    unpatchedGroupPattern,
+    "$1`linux-desktop`,",
+  );
 }
 
 // Inserts a new `titleForSection` switch case after the upstream
@@ -1198,11 +1208,6 @@ function isSettingsIconMapBundleSource(currentSource) {
   );
 }
 
-function isSettingsNavigationBundleSource(currentSource) {
-  return /[A-Za-z_$][\w$]*=\[`general-settings`,(?:`linux-desktop`,)?`import`,/.test(currentSource)
-    && currentSource.includes("slugs:[`general-settings`,");
-}
-
 function applyLinuxDesktopSettingsRoutePatch(
   currentSource,
   routeAssetSpecifier = linuxDesktopSettingsAsset,
@@ -1256,30 +1261,8 @@ function applyLinuxDesktopSettingsIconPatch(currentSource) {
   );
 }
 
-function applyLinuxDesktopSettingsNavigationPatch(currentSource) {
-  let patchedSource = currentSource;
-
-  if (!/=\[`general-settings`,`linux-desktop`/.test(patchedSource)) {
-    const orderPattern = /([A-Za-z_$][\w$]*=\[`general-settings`,)(?=`import`,)/;
-    if (!orderPattern.test(patchedSource)) {
-      throw new Error("Required Keybinds settings patch failed: could not add Linux desktop nav order");
-    }
-    patchedSource = patchedSource.replace(orderPattern, "$1`linux-desktop`,");
-  }
-
-  if (!patchedSource.includes("slugs:[`general-settings`,`linux-desktop`")) {
-    const groupPattern = /(slugs:\[`general-settings`,)(?!`linux-desktop`)/;
-    if (!groupPattern.test(patchedSource)) {
-      throw new Error("Required Keybinds settings patch failed: could not add Linux desktop nav group");
-    }
-    patchedSource = patchedSource.replace(groupPattern, "$1`linux-desktop`,");
-  }
-
-  return patchedSource;
-}
-
 function applyLinuxDesktopSettingsIndexPatch(currentSource) {
-  return applyLinuxDesktopSettingsNavigationPatch(
+  return applyLinuxDesktopSettingsSectionsPatch(
     applyLinuxDesktopSettingsRoutePatch(currentSource),
   );
 }
@@ -1290,7 +1273,7 @@ module.exports = {
   applyKeybindsSettingsSharedPatch,
   applyLinuxDesktopSettingsIndexPatch,
   applyLinuxDesktopSettingsIconPatch,
-  applyLinuxDesktopSettingsNavigationPatch,
+  applyLinuxDesktopSettingsNavigationGroupPatch,
   applyLinuxDesktopSettingsRoutePatch,
   applyLinuxDesktopSettingsSectionsPatch,
   applyLinuxDesktopSettingsSharedPatch,

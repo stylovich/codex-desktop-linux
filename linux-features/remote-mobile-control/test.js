@@ -54,24 +54,19 @@ const LATEST_REMOTE_CONVERSATION_ASSET =
   "app-initial~app-main~new-thread-panel-page~appgen-library-page~hotkey-window-thread-page~ho~glxlkd48-test.js";
 const OLD_REMOTE_RUNTIME_ASSET =
   "app-initial~app-main~onboarding-page~hotkey-window-thread-page~quick-chat-window-page~chatg~gwqc41kz-test.js";
-const CURRENT_REMOTE_RUNTIME_ASSET =
-  "app-initial~artifact-tab-content.electron~notebook-preview-panel~app-main~business-checkout~oxnpxkxc-test.js";
+const CURRENT_REMOTE_RUNTIME_ASSET = "app-initial-BTphDPeq.js";
 const CURRENT_REMOTE_RUNTIME_DECOY_ASSET =
   "app-initial~artifact-tab-content.electron~notebook-preview-panel~app-main~business-checkout~oldshape-test.js";
 const CURRENT_REMOTE_TERMINAL_STATUS_ASSET =
   CURRENT_REMOTE_RUNTIME_ASSET;
-const CURRENT_APP_MAIN_PAGE_ASSET =
-  "app-initial~app-main~appgen-settings-page~page~appgen-library-page~appgen-page~appgen-setti~ogh9jurw-test.js";
-const CURRENT_REMOTE_CONNECTIONS_VISIBILITY_ASSET =
-  "app-initial~avatarOverlayCompositionSurface~notebook-preview-panel~app-main~appgen-settings~el5fc9d5-test.js";
-const CURRENT_REMOTE_LOAD_GATE_ASSET =
-  "app-initial~artifact-tab-content.electron~notebook-preview-panel~app-main~business-checkout~k87y25tw-test.js";
+const CURRENT_APP_MAIN_PAGE_ASSET = CURRENT_REMOTE_RUNTIME_ASSET;
+const CURRENT_REMOTE_CONNECTIONS_VISIBILITY_ASSET = CURRENT_REMOTE_RUNTIME_ASSET;
+const CURRENT_REMOTE_LOAD_GATE_ASSET = CURRENT_REMOTE_RUNTIME_ASSET;
 const OLD_REMOTE_LOAD_GATE_ASSET =
   "app-initial~artifact-tab-content.electron~notebook-preview-panel~app-main~business-checkout~hm0a50up-test.js";
 const OLD_REMOTE_CONVERSATION_STATUS_ASSET =
   "app-initial~app-main~projects-index-page~remote-conversation-page-test.js";
-const CURRENT_REMOTE_CONVERSATION_STATUS_ASSET =
-  "app-initial~notebook-preview-panel~app-main~pull-request-route~projects-index-page~cloud-en~lpx9dmpy-test.js";
+const CURRENT_REMOTE_CONVERSATION_STATUS_ASSET = CURRENT_REMOTE_RUNTIME_ASSET;
 
 function syntheticReasoningSummaryTurnStartBundle() {
   return "async function yY(e,t,n){let s=n,D=n.latestThreadSettings,ee=n.initialParams,me=!fm(e.getHostId());let Ee=e.getDefaultFeatureOverride(vJ)===!0,De=ee?.summary??`none`;D?.summary!==void 0&&(De=D.summary),Ee&&(De=`detailed`),s.summary!==void 0&&(De=s.summary);logger.info(`Reasoning summary turn-start config resolved`,{safe:{concurrentReasoningSummariesFeatureOverrideEnabled:Ee,summary:De}});return{featureOverride:Ee,summary:De}}";
@@ -418,8 +413,8 @@ function syntheticAppMainActiveStatusBundle() {
 
 function syntheticAppMainEnablementBridgeBundle() {
   return [
-    "function OF(){let e=(0,Z.c)(6),{checkGate:t,isLoading:n}=sc(),r;e[0]===t?r=e[1]:(r=t(`1042620455`),e[0]=t,e[1]=r);let i=r,a,o;return e[2]!==n||e[3]!==i?(a=()=>{n||$o(`set-remote-control-connections-enabled`,{params:{enabled:i}}).catch(e=>{q.warning(`${DF} sync_failed`,{safe:{slingshotEnabled:i},sensitive:{error:e}})})},o=[n,i],e[2]=n,e[3]=i,e[4]=a,e[5]=o):(a=e[4],o=e[5]),(0,Q.useEffect)(a,o),null}",
-    "var DF=`[remote-connections/slingshot-gate-bridge]`;",
+    "function OF(){let e=(0,Z.c)(6),{checkGate:t,isLoading:n}=sc(),r;e[0]===t?r=e[1]:(r=t(`1042620455`)||t(`2055603567`),e[0]=t,e[1]=r);let i=r,a,o;return e[2]!==n||e[3]!==i?(a=()=>{n||$o(`set-remote-control-connections-enabled`,{params:{enabled:i}}).catch(e=>{q.warning(`${DF} sync_failed`,{safe:{remoteControlConnectionsEnabled:i},sensitive:{error:e}})})},o=[n,i],e[2]=n,e[3]=i,e[4]=a,e[5]=o):(a=e[4],o=e[5]),(0,Q.useEffect)(a,o),null}",
+    "var DF=`[remote-connections/gate-bridge]`;",
   ].join("");
 }
 
@@ -1147,7 +1142,7 @@ test("remote mobile control feature exposes opt-in main-bundle and webview patch
     assert.equal(loadGateDescriptor.pattern.test(LATEST_REMOTE_CONVERSATION_ASSET), false);
     assert.equal(loadGateDescriptor.pattern.test(OLD_REMOTE_RUNTIME_ASSET), false);
     assert.equal(loadGateDescriptor.pattern.test("remote-connection-visibility-test.js"), false);
-    assert.equal(loadGateDescriptor.pattern.test(CURRENT_REMOTE_RUNTIME_ASSET), false);
+    assert.equal(loadGateDescriptor.pattern.test(CURRENT_REMOTE_RUNTIME_ASSET), true);
     assert.equal(loadGateDescriptor.pattern.test(OLD_REMOTE_LOAD_GATE_ASSET), false);
     assert.equal(loadGateDescriptor.pattern.test(CURRENT_REMOTE_LOAD_GATE_ASSET), true);
 
@@ -2594,19 +2589,20 @@ test("remote mobile feature patch report records feature metadata and partial wa
         path.join(assetsDir, CURRENT_REMOTE_TERMINAL_STATUS_ASSET),
         syntheticRemoteTerminalStatusBundle(),
       );
-      fs.writeFileSync(
+      fs.appendFileSync(
         path.join(assetsDir, CURRENT_APP_MAIN_PAGE_ASSET),
-        syntheticAppMainFeatureSyncBundle() + syntheticAppMainEnablementBridgeBundle(),
+        syntheticAppMainFeatureSyncBundle() +
+          "function OF(){return $o(`set-remote-control-connections-enabled`,{params:{enabled:true}})}",
       );
-      fs.writeFileSync(
+      fs.appendFileSync(
         path.join(assetsDir, CURRENT_REMOTE_LOAD_GATE_ASSET),
         syntheticRemoteConnectionVisibilityBundle(),
       );
-      fs.writeFileSync(
+      fs.appendFileSync(
         path.join(assetsDir, CURRENT_REMOTE_CONNECTIONS_VISIBILITY_ASSET),
         syntheticCurrentUsePluginVisibilityBundle(),
       );
-      fs.writeFileSync(
+      fs.appendFileSync(
         path.join(assetsDir, CURRENT_REMOTE_CONVERSATION_STATUS_ASSET),
         syntheticAppMainActiveStatusBundle(),
       );
@@ -2644,6 +2640,19 @@ test("remote mobile feature patch report records feature metadata and partial wa
       assert.equal(settingsPatch.featureId, "remote-mobile-control");
       assert.equal(settingsPatch.status, "applied-with-warnings");
       assert.ok(settingsPatch.warnings.some((warning) => warning.includes("SSH install release needles")));
+
+      const enablementBridgePatch = report.patches.find(
+        (patch) =>
+          patch.name ===
+          "feature:remote-mobile-control:linux-remote-control-enablement-bridge",
+      );
+      assert.equal(enablementBridgePatch.status, "skipped-optional");
+      assert.notEqual(enablementBridgePatch.status, "already-applied");
+      assert.ok(
+        enablementBridgePatch.warnings.some((warning) =>
+          warning.includes("current remote-control enablement bridge anchors"),
+        ),
+      );
 
       assert.equal(
         report.patches.some((patch) => patch.name === "linux-app-server-conversation-hydration"),
@@ -2723,7 +2732,7 @@ test("Linux remote-control enablement bridge loads remote-control clients on Lin
 
   const calls = [];
   const context = {
-    DF: "[remote-connections/slingshot-gate-bridge]",
+    DF: "[remote-connections/gate-bridge]",
     navigator: { userAgent: "X11; Linux x86_64" },
     q: { warning() {} },
     Q: { useEffect(callback) { callback(); } },
@@ -2743,7 +2752,7 @@ test("Linux remote-control enablement bridge loads remote-control clients on Lin
 
 test("Linux remote-control enablement bridge rejects distant anchors", () => {
   const source = [
-    "var DF=`[remote-connections/slingshot-gate-bridge]`;",
+    "var DF=`[remote-connections/gate-bridge]`;",
     "x".repeat(4_501),
     "function OF(){return $o(`set-remote-control-connections-enabled`,{params:{enabled:true}})}",
   ].join("");
@@ -2753,6 +2762,74 @@ test("Linux remote-control enablement bridge rejects distant anchors", () => {
 
   assert.equal(result, source);
   assert.ok(warnings.some((warning) => warning.includes("anchors are too far apart")));
+});
+
+test("Linux remote-control enablement bridge reports current anchor drift instead of false success", () => {
+  const source =
+    "function OF(){return $o(`set-remote-control-connections-enabled`,{params:{enabled:true}})}";
+  const { result, warnings } = captureWarnings(() =>
+    applyLinuxRemoteControlEnablementBridgePatch(source),
+  );
+
+  assert.equal(result, source);
+  assert.ok(
+    warnings.some((warning) =>
+      warning.includes("current remote-control enablement bridge anchors"),
+    ),
+  );
+});
+
+test("Linux remote-control enablement bridge preserves the current second gate off Linux", () => {
+  const patched = applyLinuxRemoteControlEnablementBridgePatch(
+    syntheticAppMainEnablementBridgeBundle(),
+  );
+  const calls = [];
+  const checkedGates = [];
+  const context = {
+    DF: "[remote-connections/gate-bridge]",
+    navigator: { userAgent: "Macintosh" },
+    q: { warning() {} },
+    Q: { useEffect(callback) { callback(); } },
+    sc: () => ({
+      checkGate(gate) {
+        checkedGates.push(gate);
+        return gate === "2055603567";
+      },
+      isLoading: false,
+    }),
+    Z: { c: () => [] },
+    $o: (method, { params }) => {
+      calls.push({ method, params });
+      return Promise.resolve();
+    },
+  };
+  vm.runInNewContext(`${patched};OF();`, context);
+
+  assert.deepEqual(checkedGates, ["1042620455", "2055603567"]);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].params.enabled, true);
+});
+
+test("Linux remote-control enablement bridge waits for current gates to load", () => {
+  const patched = applyLinuxRemoteControlEnablementBridgePatch(
+    syntheticAppMainEnablementBridgeBundle(),
+  );
+  const calls = [];
+  const context = {
+    DF: "[remote-connections/gate-bridge]",
+    navigator: { userAgent: "X11; Linux x86_64" },
+    q: { warning() {} },
+    Q: { useEffect(callback) { callback(); } },
+    sc: () => ({ checkGate: () => false, isLoading: true }),
+    Z: { c: () => [] },
+    $o: (method, { params }) => {
+      calls.push({ method, params });
+      return Promise.resolve();
+    },
+  };
+  vm.runInNewContext(`${patched};OF();`, context);
+
+  assert.equal(calls.length, 0);
 });
 
 test("Linux remote-control enablement bridge omits params for current host toggle handler", async () => {
@@ -2817,16 +2894,17 @@ test("Linux remote-control enablement bridge warns when host toggle params needl
   assert.ok(warnings.some((warning) => warning.includes("enable-for-host params needle")));
 });
 
-test("Linux remote-control enablement bridge auto-connects only this Desktop host", async () => {
+test("Linux remote-control enablement bridge auto-connects this Desktop host without changing other hosts", async () => {
   const source = syntheticAppMainEnablementBridgeBundle();
   const patched = applyLinuxRemoteControlEnablementBridgePatch(source);
 
   assert.doesNotMatch(patched, /safe:\{[^}]*\bhostId:/);
   assert.match(patched, /sensitive:\{hostId:[^}]+error:/);
+  assert.match(patched, /codexLinuxRemoteControlSelfAutoConnect/);
 
   const calls = [];
   const context = {
-    DF: "[remote-connections/slingshot-gate-bridge]",
+    DF: "[remote-connections/gate-bridge]",
     navigator: { userAgent: "X11; Linux x86_64" },
     Promise,
     q: { warning() {} },
@@ -2843,7 +2921,7 @@ test("Linux remote-control enablement bridge auto-connects only this Desktop hos
         return Promise.resolve({
           remoteControlConnections: [
             { hostId: "remote-control:env_local", installationId: "install_local" },
-            { hostId: "remote-control:env_stale", installationId: "install_stale" },
+            { hostId: "remote-control:env_other", installationId: "install_other" },
           ],
         });
       }
@@ -2856,7 +2934,7 @@ test("Linux remote-control enablement bridge auto-connects only this Desktop hos
   vm.runInNewContext(`${patched};OF();`, context);
   await new Promise((resolve) => setImmediate(resolve));
 
-  assert.equal(calls.length, 4);
+  assert.equal(calls.length, 3);
   assert.equal(calls[0].method, "set-remote-control-connections-enabled");
   assert.equal(calls[0].params.enabled, true);
   assert.equal(calls[1].method, "get-global-state");
@@ -2864,9 +2942,14 @@ test("Linux remote-control enablement bridge auto-connects only this Desktop hos
   assert.equal(calls[2].method, "set-remote-connection-auto-connect");
   assert.equal(calls[2].params.hostId, "remote-control:env_local");
   assert.equal(calls[2].params.autoConnect, true);
-  assert.equal(calls[3].method, "set-remote-connection-auto-connect");
-  assert.equal(calls[3].params.hostId, "remote-control:env_stale");
-  assert.equal(calls[3].params.autoConnect, false);
+  assert.equal(
+    calls.some(
+      ({ method, params }) =>
+        method === "set-remote-connection-auto-connect" &&
+        params.hostId === "remote-control:env_other",
+    ),
+    false,
+  );
 });
 
 test("patched Linux device-key provider can create, sign with, and delete a key", async () => {
@@ -3504,19 +3587,19 @@ test("remote mobile control feature participates in ASAR patching and reports", 
           path.join(assetsDir, "app-server-manager-signals-test.js"),
           syntheticAppServerManagerSignalsBundle(),
         );
-        fs.writeFileSync(
+        fs.appendFileSync(
           path.join(assetsDir, CURRENT_APP_MAIN_PAGE_ASSET),
           syntheticAppMainFeatureSyncBundle() + syntheticAppMainEnablementBridgeBundle(),
         );
-        fs.writeFileSync(
+        fs.appendFileSync(
           path.join(assetsDir, CURRENT_REMOTE_LOAD_GATE_ASSET),
           syntheticRemoteConnectionVisibilityBundle(),
         );
-        fs.writeFileSync(
+        fs.appendFileSync(
           path.join(assetsDir, CURRENT_REMOTE_CONNECTIONS_VISIBILITY_ASSET),
           syntheticCurrentUsePluginVisibilityBundle(),
         );
-        fs.writeFileSync(
+        fs.appendFileSync(
           path.join(assetsDir, CURRENT_REMOTE_CONVERSATION_STATUS_ASSET),
           syntheticAppMainActiveStatusBundle(),
         );
@@ -3718,6 +3801,12 @@ test("remote mobile control feature participates in ASAR patching and reports", 
         assert.ok(
           secondReport.patches.some((patch) =>
             patch.name === "feature:remote-mobile-control:linux-remote-terminal-status-recovery" &&
+            patch.status === "already-applied",
+          ),
+        );
+        assert.ok(
+          secondReport.patches.some((patch) =>
+            patch.name === "feature:remote-mobile-control:linux-remote-control-enablement-bridge" &&
             patch.status === "already-applied",
           ),
         );
